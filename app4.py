@@ -1,51 +1,107 @@
+import os
+from pathlib import Path
+import requests
+import time
 import argparse
+import threading
+from multiprocessing import Process
 import asyncio
 import aiohttp
-import time
-import os
 
-img_urls = [
-    'https://w.forfun.com/fetch/5c/5c1c84e8bae25709f434f40423709150.jpeg',
-    'https://i.pinimg.com/originals/1a/99/fe/1a99fe8ecdd4a3172ba084a256d5875e.jpg',
-    'https://i.pinimg.com/736x/d7/1d/66/d71d663c070a4b26ecfd6f70a92c37cb.jpg',
-    'https://i.pinimg.com/736x/61/9b/e3/619be348955a8ae6ef385fbcecf19029.jpg',
-    'https://vocasia.id/blog/wp-content/uploads/2023/03/watermark-adalah-1-720x450.jpg'
-]
+images = []
+with open('images.txt', 'r') as f:
+    for image in f.readlines():
+        images.append(image.strip())
 
-IMG_DIR = 'images'
+PATH = Path('images')
 
 
-async def download_image(url, target_dir: str):
-    start_process_time = time.time()
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            data = await response.read()
-            filename = url.split('/')[-1]
-            with open(os.path.join(target_dir, filename), 'wb') as img:
-                img.write(data)
-            print(f"Downloaded {url} in {time.time() - start_process_time:.2f} seconds")
-
-
-async def main():
-    tasks = []
-    for img_url in urls:
-        tasks.append(asyncio.create_task(download_image(img_url, IMG_DIR)))
-    await asyncio.gather(*tasks)
+def download_img(url, dir_path=PATH):
+    start_time = time.time()
+    response = requests.get(url)
+    filename = url.split('/')[-1]
+    with open(os.path.join(dir_path, filename), 'wb') as f:
+        for data in response.iter_content(1024):
+            f.write(data)
+    end_time = time.time() - start_time
+    print(f'Загрузка {filename} заняла {end_time:.2f} сек')
 
 
 def parse():
-    parser = argparse.ArgumentParser(description='Downloads images from given url list')
-    parser.add_argument('-u', '--urls', nargs='+', type=str, help='Image URLs separated by space')
+    parser = argparse.ArgumentParser(description='Парсер изображений по URL')
+    parser.add_argument('-u', '--urls', default=images, nargs='+', type=str, help='Список URL')
     return parser.parse_args()
 
 
-if __name__ == '__main__':
-    urls = parse().urls or img_urls
-
-    if not os.path.exists(IMG_DIR):
-        os.mkdir(IMG_DIR)
-
+async def download_img_as(url, dir_path=PATH):
     start_time = time.time()
-    asyncio.run(main())
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            item = await response.read()
+            filename = url.split('/')[-1]
+            with open(os.path.join(dir_path, filename), 'wb') as f:
+                f.write(item)
+    end_time = time.time() - start_time
+    print(f'Загрузка {filename} заняла {end_time:.2f} сек')
 
-    print(f'Total download time (async): {time.time() - start_time:.2f} sec')
+
+def download_img_thread(urls):
+    threads = []
+    start_time = time.time()
+
+    for url in urls:
+        thread = threading.Thread(target=download_img, args=(url,))
+        threads.append(thread)
+        thread.start()
+
+    for thread in threads:
+        thread.join()
+
+    end_time = time.time() - start_time
+    print(f'Загрузка заняла {end_time:.2f} сек')
+
+
+def download_img_process(urls):
+    processes = []
+    start_time = time.time()
+
+    for url in urls:
+        process = Process(target=download_img, args=(url,))
+        processes.append(process)
+        process.start()
+
+    for process in processes:
+        process.join()
+
+    end_time = time.time() - start_time
+    print(f'Загрузка заняла {end_time:.2f} сек')
+
+
+async def download_img_async(urls):
+    tasks = []
+    start_time = time.time()
+
+    for url in urls:
+        task = asyncio.create_task(download_img_as(url))
+        tasks.append(task)
+
+    await asyncio.gather(*tasks)
+
+    end_time = time.time() - start_time
+    print(f'Загрузка заняла {end_time:.2f} сек')
+
+
+if __name__ == '__main__':
+    urls = parse().urls
+
+    if not os.path.exists(PATH):
+        os.mkdir(PATH)
+
+    print(f'Загрузка {len(urls)}  через мультипотоки')
+    download_img_thread(urls)
+
+    print(f'Загрузка {len(urls)}  через мультипроцессы')
+    download_img_process(urls)
+
+    print(f'Загрузка {len(urls)}  асинхронно')
+    asyncio.run(download_img_async(urls))
